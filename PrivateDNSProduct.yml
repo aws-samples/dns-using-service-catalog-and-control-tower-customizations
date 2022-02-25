@@ -1,0 +1,154 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: This template configures Route53 private hosted zones and Authorization to hub VPC in an AVM-vended account for Hybrid DNS capabilities
+
+Parameters:
+  DomainName:
+    Type: String
+    Description: The Domain name used in the Private Hosted Zone to be created in the application accounts
+  LocalVPCID:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID of the local VPC in the Application Account
+  NetworkingHubAccountId:
+    Type: String
+    Description: The account id of the Networking Hub Account 
+  AdditionalVPCIds:
+    Type: List<String>
+    Description: VPC Ids from other accounts belonging to the organization to associate to private hosted zone
+  AdditionalAccountIds:
+    Type: List<Number>
+    Description: Account Ids of the VPCs provided in AdditionalVPCIds parameter. Please ensure the accounts ids are provided in the same order as the vpc ids.
+  SNSAssociationTopicArn:
+    Type: String
+    Description: Arn of the SNS Hub Association Topic (Shared Services)
+
+Resources:
+  PrivateHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties :
+      Name : !Ref DomainName
+      VPCs:
+        -
+          VPCRegion: !Ref "AWS::Region"
+          VPCId: !Ref LocalVPCID
+
+  HubAuthorizationCustomResource:
+    Type: Custom::Authorization
+    Properties:
+      ServiceToken: !GetAtt HubAuthorizationLambda.Arn
+      HostedZoneId: !Ref PrivateHostedZone
+      HostedZoneDomainName: !Ref DomainName
+      SourceAccountId: !Ref "AWS::AccountId"
+      VPCIds: !Ref AdditionalVPCIds
+      VPCRegion: !Ref "AWS::Region"
+      AccountIds: !Ref AdditionalAccountIds
+      SNSAssociationTopic: !Ref SNSAssociationTopicArn
+
+  HubAuthorizationLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "Resource * acceptable for this policy."
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'lambda.amazonaws.com'
+          Action:
+          - 'sts:AssumeRole'
+      Path: '/'
+      ManagedPolicyArns:
+      - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+      - PolicyName: Route53PrivateZoneAuthorization
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+            - route53:CreateVPCAssociationAuthorization
+            Resource: !Sub 'arn:${AWS::Partition}:route53:::hostedzone/*'
+      - PolicyName: SNSPublish
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+            - sns:Publish
+            Resource: !Ref SNSAssociationTopicArn
+      - PolicyName: DeleteBoilerPlateVPC
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Action:
+              - ec2:DeleteVpc
+              Resource: "*"
+
+  HubAuthorizationLambda: # needs no monitoring because it is used as a custom resource
+    Type: 'AWS::Lambda::Function'
+    DependsOn:
+      - PrivateHostedZone
+    Properties:
+      Code:
+        ZipFile:
+          !Sub |
+          # Import statements
+          import boto3, sys
+          import os
+          import cfnresponse
+          import json
+          from botocore.exceptions import ClientError
+          # Start Lambda function
+          def create_association(event,context):
+            props = event['ResourceProperties']
+            route53 = boto3.client('route53')
+            sns = boto3.client('sns')
+            try:
+              #Paylod for SNS message
+              subject=f"{props['HostedZoneId']} Association Request"
+              payload={
+                "hostedZoneId": f"{props['HostedZoneId']}",
+                "hostedZoneDomainName": f"{props['HostedZoneDomainName']}",
+                "SourceAccountId": f"{props['SourceAccountId']}",
+                "VPCIds": f"{props['VPCIds']}",
+                "AccountIds": f"{props['AccountIds']}",
+                "VPCRegion": f"{props['VPCRegion']}"
+              }
+              sns.publish(
+                TopicArn=f"{props['SNSAssociationTopic']}",
+                Subject=subject,
+                Message=json.dumps(payload)
+              )
+              print("Respond: SUCCESS")
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              return
+            except ClientError as ex:
+              print('Updating Authorization has failed.  See the following error.')
+              print(ex.response['Error']['Message'])
+              print("Respond: FAILED")
+              cfnresponse.send(event, context, cfnresponse.FAILED, ex.response)
+          def lambda_handler(event, context):
+            print(f"Custom::Authorization: {event['RequestType']}")
+            if event['RequestType'] in ["Create","Update"]:
+              print(f"{event['RequestType']}: Authorization Custom Resource")
+              create_association(event,context)
+            # Handle a CloudFormation resource delete event
+            if event['RequestType'] == "Delete":
+              print("Delete: Authorization Custom Resource")
+              # Nothing to delete
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              return
+      Environment:
+        Variables:
+          BP_VPC: !Ref LocalVPCID
+      Handler: 'index.lambda_handler'
+      MemorySize: 128
+      Role: !GetAtt 'HubAuthorizationLambdaRole.Arn'
+      Runtime: 'python3.6'
+      Timeout: 60
+
+  HubAuthorizationLambdaLogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${HubAuthorizationLambda}'

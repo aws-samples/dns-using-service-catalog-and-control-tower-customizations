@@ -1,0 +1,54 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS CloudFormation template to create the following
+
+Parameters:
+  NetworkingHubAccountId:
+    Type: String
+    Description: AWS account id of the Networking Hub Account
+
+Resources:
+## Creating Hub Account Private Hosted Zone
+  HubLambdaCrossAccountRole:
+    Type: 'AWS::IAM::Role'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "Resource * acceptable for this policy."
+    Properties:
+      RoleName: 'HubLambdaAssumeRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            AWS: !Sub "arn:${AWS::Partition}:iam::${NetworkingHubAccountId}:role/Route53-DNS-Service-Catalog-Hub-Lambda-Role"
+          Action:
+          - 'sts:AssumeRole'
+      Path: '/'
+      ManagedPolicyArns:
+      - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+      - PolicyName: Route53PrivateZoneAssociationAuthorization
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'route53:AssociateVPCWithHostedZone'
+            - 'route53:CreateVPCAssociationAuthorization'
+            Resource: 
+            - !Sub 'arn:${AWS::Partition}:route53:::hostedzone/*'
+            - !Sub 'arn:${AWS::Partition}:ec2:*:${AWS::AccountId}:vpc/*'
+      - PolicyName: DescribeVPCAndAssumeRole
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'ec2:DescribeVpcs'
+            Resource: '*'
+
+Outputs:
+  oHubLambdaAssumeRole:
+    Description: ARN of the IAM role used by Hub account lambda to perform associate/authorize actions
+    Value: !GetAtt "HubLambdaCrossAccountRole.Arn"

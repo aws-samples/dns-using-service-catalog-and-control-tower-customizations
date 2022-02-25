@@ -1,0 +1,29 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  AWS CloudFormation Template to associate the spoke VPC to the resolver rules
+
+Parameters:
+  ChildDomainResolverRuleID:
+    Type: String
+    Description: Rule ID for the Shared Route53 Resolver rule for Child Domains
+  OnPremDomainResolverRuleID:
+    Type: String
+    Description: Rule ID for the Shared Route53 Resolver rule for On Premise DNS Domain
+  LocalVPCID:
+    Type: AWS::EC2::VPC::Id
+    Description: Provide the VPC ID with which Route 53 Resolver rules are associated
+
+Resources:
+  Route53RuleAssociationChildDomains:
+    Type: "AWS::Route53Resolver::ResolverRuleAssociation"
+    Properties:
+      Name: RuleAssociationforChildDomains
+      ResolverRuleId: !Ref ChildDomainResolverRuleID
+      VPCId: !Ref LocalVPCID
+
+  Route53RuleAssociationOnPremiseDomains:
+    Type: "AWS::Route53Resolver::ResolverRuleAssociation"
+    Properties:
+      Name: RuleAssociationforChildDomains
+      ResolverRuleId: !Ref OnPremDomainResolverRuleID
+      VPCId: !Ref LocalVPCID

@@ -1,0 +1,70 @@
+[
+  {
+    "ParameterKey": "ManagementAccountId",
+    "ParameterValue": "<STRING>"
+  },
+  {
+    "ParameterKey": "OrganizationID",
+    "ParameterValue": "<STRING>"
+  },
+  {
+    "ParameterKey": "ParentDNSDomain",
+    "ParameterValue": "<STRING>"
+  },
+  {
+    "ParameterKey": "OnPremDNSDomain",
+    "ParameterValue": "<STRING>"
+  },
+  {
+    "ParameterKey": "OnPremDNS1",
+    "ParameterValue": "<STRING>"
+  },
+  {
+    "ParameterKey": "OnPremDNS2",
+    "ParameterValue": "<STRING>"
+  },
+  {
+    "ParameterKey": "HubVpcId",
+    "ParameterValue": "<STRING>"
+  },
+  {
+    "ParameterKey": "HubPrivateHostedZoneName",
+    "ParameterValue": "<STRING>"
+  },
+  {
+    "ParameterKey": "Subnet1",
+    "ParameterValue": "<STRING>"
+  },
+  {
+    "ParameterKey": "Subnet2",
+    "ParameterValue": "<STRING>"
+  },
+  {
+    "ParameterKey": "Subnet3",
+    "ParameterValue": "<STRING>"
+  },
+  {
+    "ParameterKey": "Subnet1InboundIP",
+    "ParameterValue": "<STRING>"
+  },
+  {
+    "ParameterKey": "Subnet2InboundIP",
+    "ParameterValue": "<STRING>"
+  },
+  {
+    "ParameterKey": "Subnet3InboundIP",
+    "ParameterValue": "<STRING>"
+  },
+  {
+    "ParameterKey": "Subnet1OutboundIP",
+    "ParameterValue": "<STRING>"
+  },
+  {
+    "ParameterKey": "Subnet2OutboundIP",
+    "ParameterValue": "<STRING>"
+  },
+  {
+    "ParameterKey": "Subnet3OutboundIP",
+    "ParameterValue": "<STRING>"
+  }
+]

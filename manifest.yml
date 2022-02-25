@@ -1,0 +1,61 @@
+---
+#Default region for deploying Custom Control Tower: Code Pipeline, Step functions, Lambda, SSM parameters, and StackSets
+region: us-west-2 
+version: 2021-03-15
+
+# Control Tower Custom CloudFormation Resources
+resources: 
+  - name: route53-dns-service-catalog-hub
+    resource_file: route53/templates/Route53-DNS-Service-Catalog-Hub-Account.yml
+    parameter_file: route53/parameters/Route53-DNS-Service-Catalog-Hub-Account.json
+    deploy_method: stack_set
+    deployment_targets:
+      accounts:
+        - NetworkingHub
+    export_outputs: 
+      - name: /org/sharedservice/dns/HubPrivateHostedZoneID
+        value: $[output_oHubPrivateHostedZoneID]
+      - name: /org/sharedservice/dns/ChildDomainsResolverRuleID
+        value: $[output_oChildDomainsResolverRuleID]
+      - name: /org/sharedservice/dns/OnPremDomainResolverRuleID
+        value: $[output_oOnPremDomainResolverRuleID]
+      - name: /org/sharedservice/dns/SNSAssociationTopicArn
+        value: $[output_SNSAssociationTopicArn]
+      - name: /org/sharedservice/dns/OutBoundResolverID
+        value: $[output_oOutBoundDNSResolverID]
+      - name: /org/sharedservice/dns/InboundResolverIP-1
+        value: $[output_oInboundResolverIP1]
+      - name: /org/sharedservice/dns/InboundResolverIP-2
+        value: $[output_oInboundResolverIP2]
+      - name: /org/sharedservice/dns/InboundResolverIP-3
+        value: $[output_oInboundResolverIP3]
+      - name: /org/sharedservice/dns/MasterDNSPortfolioID
+        value: $[output_oMasterPortfolioId]
+      - name: /org/sharedservice/dns/Route53OutboundDNSProductID
+        value: $[output_oRoute53ROutboundDNSProductId]
+      - name: /org/sharedservice/dns/Route53OutboundDNSProductName
+        value: $[output_oRoute53ROutboundDNSProductName]
+      - name: /org/sharedservice/dns/Route53InboundDNSProductID
+        value: $[output_oRoute53RInboundDNSProductId]
+      - name: /org/sharedservice/dns/Route53InboundDNSProductName
+        value: $[output_oRoute53RInboundDNSProductName]
+      - name: /org/sharedservice/dns/Route53PrivateDNSProductID
+        value: $[output_oRoute53PrivateDNSProductId]
+      - name: /org/sharedservice/dns/Route53PrivateDNSProductName
+        value: $[output_oRoute53PrivateDNSProductName]
+      - name: /org/sharedservice/dns/PortfolioShareLambdaArn
+        value: $[output_oPortfolioShareLambda]
+    regions:
+      - us-west-2
+  - name: route53-dns-service-catalog-spoke
+    resource_file: route53/templates/Route53-DNS-Service-Catalog-Spoke-Account.yml
+    parameters:
+    - parameter_key: NetworkingHubAccountId
+      parameter_value: 752626655857 
+    deploy_method: stack_set
+    deployment_targets:
+      organizational_units:
+        - Root
+    regions:
+      - us-west-2
+      
