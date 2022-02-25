@@ -51,7 +51,7 @@ resources:
     resource_file: route53/templates/Route53-DNS-Service-Catalog-Spoke-Account.yml
     parameters:
     - parameter_key: NetworkingHubAccountId
-      parameter_value: 752626655857 
+      parameter_value: 123456789012 
     deploy_method: stack_set
     deployment_targets:
       organizational_units:
