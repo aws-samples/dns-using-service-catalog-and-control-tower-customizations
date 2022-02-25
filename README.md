@@ -1,11 +1,14 @@
-## My Project
+## dns-using-service-catalogue-and-control-tower-customizations
 
-TODO: Fill this README out!
 
-Be sure to:
 
-* Change the title in this README
-* Edit your repository description on GitHub
+
+## Team
+Shiva Vaidyanathan - vaidys@amazon.com
+Sr. Cloud Infrastructure Architect
+
+Pratik Jain - pratikdj@amazon.com
+Cloud Infrastructure Architect
 
 ## Security
 
