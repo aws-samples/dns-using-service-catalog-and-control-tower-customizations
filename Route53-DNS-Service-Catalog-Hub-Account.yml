@@ -1,0 +1,600 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS CloudFormation template to create the following
+#1)Route53 Inbound and Outbound Resolver Endpoints
+#2)Route53 Resolver rules for enabling On-Prem and local DNS name resolution
+
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+      - Label:
+          default: Organization & Account Details
+        Parameters:
+          - OrganizationID
+          - ManagementAccountId
+      - Label:
+          default: Network and DNS Configuration
+        Parameters:
+          - ParentDNSDomain
+          - OnPremDNSDomain
+          - OnPremDNS1
+          - OnPremDNS2
+          - HubVpcId
+          - Subnet1
+          - Subnet2    
+          - Subnet3
+          - Subnet1InboundIP
+          - Subnet2InboundIP
+          - Subnet3InboundIP
+          - Subnet1OutboundIP
+          - Subnet2OutboundIP
+          - Subnet3OutboundIP
+      - Label:
+          default: Service Catalog Configuration
+        Parameters:
+          - PortfolioName
+          - Route53ResolverRulesProductKey
+          - Route53PrivateHostedZoneProductKey
+          - Version
+
+Parameters :
+  ManagementAccountId:
+    Type: String
+    Description: AWS account id of the Control Tower Management Account
+  OrganizationID:
+    Type: String
+    Description: AWS organization (Org) ID or Organization Unit (OU) id where the Route53 Resolver Rules and the Service Catalog Portfolio need to be shared
+  
+  ParentDNSDomain:
+    Type: String
+    Description: Parent DNS Domain for all the child DNS domains to be used by Application Accounts on AWS.
+  OnPremDNSDomain:
+    Type: String
+    Description: On-Premise DNS Domain to be resolved by Application Accounts on AWS.
+  OnPremDNS1:
+    Type: String
+    Description: IP address of the Primary on-premise DNS Server to forward the queries for the On-Premise DNS Domain.
+  OnPremDNS2:
+    Type: String
+    Description: IP address of the Secondary on-premise DNS Server to forward the queries for the On-Premise DNS Domain.
+  HubVpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC Id in the Networking Shared Service(Hub) Account to host the Service endpoints
+  Subnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet ID of the shared services(Hub) VPC's 1st Private Subnet
+  Subnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet ID of the shared services(Hub) VPC's 2nd Private Subnet      
+  Subnet3:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet ID of the shared services(Hub) VPC's 3rd Private Subnet
+  Subnet1InboundIP:
+    Type: String
+    Description: Static IP address for Inbound Resolver in 1st Private Subnet
+  Subnet2InboundIP:
+    Type: String
+    Description: Static IP address for Inbound Resolver in 2nd Private Subnet
+  Subnet3InboundIP:
+    Type: String
+    Description: Static IP address for Inbound Resolver in 3rd Private Subnet
+  Subnet1OutboundIP:
+    Type: String
+    Description: Static IP address for Outbound Resolver in 1st Private Subnet
+  Subnet2OutboundIP:
+    Type: String
+    Description: Static IP address for Outbound Resolver in 2nd Private Subnet
+  Subnet3OutboundIP:
+    Type: String
+    Description: Static IP address for Outbound Resolver in 3rd Private Subnet
+
+  PortfolioName:
+    Type: String
+    Default: Self-Service DNS Portfolio
+  Route53ResolverRulesProductKey:
+    Type: String
+    Description: The full S3 location where the Route53 resolver rules product template is uploaded to.
+    Default: https://service-catalog-products-dns.s3.us-west-2.amazonaws.com/Rule-association.yaml
+  Route53PrivateHostedZoneProductKey:
+    Type: String
+    Description: The full S3 location where the Route53 private hosted zone product template is uploaded to.
+    Default: https://service-catalog-products-dns.s3.us-west-2.amazonaws.com/PrivateHostedZoneProduct.yaml
+  Version:
+    Type: String
+    Description: Parameter to trigger the custom resource update. Please change this value every time you want to trigger the update logic of custom resource
+    Default: 1
+
+Resources:
+## Creating Security Groups for Route53 Resolvers
+
+  SecurityGroupforRoute53Resolvers:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: Security Group for Route53 Resolvers
+      SecurityGroupIngress: 
+        - Description: Allowing UDP DNS Traffic
+          IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+        - Description: Allowing TCP DNS Traffic
+          IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress: 
+        - Description: Allowing UDP DNS Traffic
+          IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+        - Description: Allowing TCP DNS Traffic
+          IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+      Tags: 
+        - Key: Name
+          Value: SecurityGroupforRoute53Resolvers
+      VpcId: !Ref HubVpcId
+
+## Creating Route53 Inbound and Outbound Resolvers Endpoints
+
+  Route53InboundEndpoint:
+    Type: "AWS::Route53Resolver::ResolverEndpoint"
+    Properties:
+      Name: Route53InboundEndpoint
+      Direction: Inbound
+      IpAddresses:
+        - SubnetId: !Ref Subnet1
+          Ip: !Ref Subnet1InboundIP
+        - SubnetId: !Ref Subnet2
+          Ip: !Ref Subnet2InboundIP
+        - SubnetId: !Ref Subnet3
+          Ip: !Ref Subnet3InboundIP
+      SecurityGroupIds:
+        - !GetAtt SecurityGroupforRoute53Resolvers.GroupId
+        
+  Route53OutboundEndpoint:
+    Type: "AWS::Route53Resolver::ResolverEndpoint"
+    Properties:
+      Name: Route53OutboundEndpoint
+      Direction: Outbound
+      IpAddresses:
+        - SubnetId: !Ref Subnet1
+          Ip: !Ref Subnet1OutboundIP
+        - SubnetId: !Ref Subnet2
+          Ip: !Ref Subnet2OutboundIP
+        - SubnetId: !Ref Subnet3
+          Ip: !Ref Subnet3OutboundIP
+      SecurityGroupIds:
+        - !GetAtt SecurityGroupforRoute53Resolvers.GroupId
+
+## Creating Forwarding Rule for Application DNS Domains on AWS to be resolved by all accounts on AWS
+
+  ChildDomainsResolverRule:
+    Type: "AWS::Route53Resolver::ResolverRule"
+    Properties:
+      DomainName: !Ref ParentDNSDomain
+      Name: InternalDNSResolution
+      ResolverEndpointId: !GetAtt Route53OutboundEndpoint.ResolverEndpointId
+      RuleType: FORWARD
+      TargetIps:
+        - Ip: !Ref Subnet1InboundIP
+          Port: 53
+        - Ip: !Ref Subnet2InboundIP
+          Port: 53
+        - Ip: !Ref Subnet3InboundIP
+          Port: 53
+
+## Creating Forwarding Rule for On-Premise DNS Domain
+
+  OnPremDomainResolverRule:
+    Type: "AWS::Route53Resolver::ResolverRule"
+    Properties:
+      DomainName: !Ref OnPremDNSDomain
+      Name: OnPremiseDNSResolution
+      ResolverEndpointId: !GetAtt Route53OutboundEndpoint.ResolverEndpointId
+      RuleType: FORWARD
+      TargetIps:
+        - Ip: !Ref OnPremDNS1
+          Port: 53
+        - Ip: !Ref OnPremDNS2
+          Port: 53
+
+## Sharing the Route53 Resolver Rules with Organization using RAM (Resource Access Manager)
+
+  ResolverRuleShare:
+    Type: "AWS::RAM::ResourceShare"
+    Properties:
+      Name: "Route53 Resolver Rules Organizational Share"
+      ResourceArns:
+        - !GetAtt ChildDomainsResolverRule.Arn
+        - !GetAtt OnPremDomainResolverRule.Arn
+      Principals:
+        - !Sub arn:aws:organizations::${ManagementAccountId}:organization/${OrganizationID}
+
+## Automation to receive attachment requests from Child PHZs to the hub HubVpcId
+
+  SNSAssociationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: PrivateHostedZoneAssociationTopic
+      TopicName: PrivateHostedZoneAssociationTopic
+  SNSAssociationTopicPolicy:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F18
+            reason: "We can allow * for the Principal as we are limiting access to the Org."
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref SNSAssociationTopic
+      PolicyDocument:
+        Statement:
+          - Sid: AWSSNSPolicy
+            Action:
+              - sns:Publish
+            Effect: Allow
+            Resource: !Ref SNSAssociationTopic
+            Principal:
+              AWS: '*'
+            Condition:
+              StringEquals:
+                aws:PrincipalOrgID: !Ref OrganizationID
+  SNSAssociationSubscription:
+    Type: "AWS::SNS::Subscription"
+    Properties:
+      Endpoint: !GetAtt AssociationLambda.Arn
+      Protocol: lambda
+      TopicArn: !Ref SNSAssociationTopic
+  SNSAssociationLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref SNSAssociationTopic
+      FunctionName: !GetAtt AssociationLambda.Arn
+  AssociationLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "Resource * acceptable for this policy."
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'lambda.amazonaws.com'
+          Action:
+          - 'sts:AssumeRole'
+      Path: '/'
+      ManagedPolicyArns:
+      - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+      - PolicyName: Route53PrivateZoneAssociation
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'route53:AssociateVPCWithHostedZone'
+            Resource: !Sub 'arn:${AWS::Partition}:route53:::hostedzone/*'
+      - PolicyName: DescribeVPCs
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'ec2:DescribeVpcs'
+            Resource: '*'
+  AssociationLambda: # needs no monitoring because it is used as a custom resource
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        ZipFile:
+          !Sub |
+          # Import statements
+          import boto3
+          import json
+          from botocore.exceptions import ClientError
+          # Start Lambda function
+          def lambda_handler(event, context):
+            print(f"Hosted Zone {event['Records'][0]['Sns']['Subject']}")
+            associationData = json.loads(event['Records'][0]['Sns']['Message'])
+            print('data received:', associationData)
+            try:
+              route53 = boto3.client('route53')
+              response = route53.associate_vpc_with_hosted_zone(
+                HostedZoneId=associationData['hostedZoneId'],
+                VPC={
+                  'VPCRegion': associationData['VPCRegion'],
+                  'VPCId': associationData['VPCId']
+                }
+              )
+              print(response)
+              print("Respond: SUCCESS")
+              return
+            except ClientError as ex:
+              print('Creating hosted zone association has failed.  See the following error.')
+              print(ex.response['Error']['Message'])
+              print("Respond: FAILED")
+              return
+      Handler: "index.lambda_handler"
+      MemorySize: 128
+      Role: !GetAtt "AssociationLambdaRole.Arn"
+      Runtime: "python3.6"
+      Timeout: 60
+
+##### Portfolio Resources #####
+
+  MasterPortfolio:
+    Type: AWS::ServiceCatalog::Portfolio
+    Properties:
+      AcceptLanguage: en
+      Description: Portfolio for DNS products
+      DisplayName: !Ref PortfolioName
+      ProviderName: AWS
+
+##### Product Resources #####
+
+  Route53ResolverRulesProduct:
+    Type: AWS::ServiceCatalog::CloudFormationProduct
+    Properties:
+      AcceptLanguage: en
+      Description: This product builds standardized DNS Resolver rule associations.
+      Distributor: AWS
+      Name: Route53 Resolver Rule Association
+      Owner: AWS
+      ProvisioningArtifactParameters:
+        - Description: This is version 1.0 of the AWS Route53 Resolver Rules product.
+          Name: Version - 1.0
+          Info:
+            LoadTemplateFromURL: !Ref Route53ResolverRulesProductKey
+
+  Route53PrivateHostedZoneProduct:
+    Type: AWS::ServiceCatalog::CloudFormationProduct
+    Properties:
+      AcceptLanguage: en
+      Description: This product builds a standardized DNS private hosted zone associations.
+      Distributor: AWS
+      Name: Route53 Private Hosted Zone
+      Owner: AWS
+      ProvisioningArtifactParameters:
+        - Description: This is version 1.0 of the AWS Route53 Private Hosted Zone product.
+          Name: Version - 1.0
+          Info:
+            LoadTemplateFromURL: !Ref Route53PrivateHostedZoneProductKey
+
+##### Portfolio / Product Associations ##### 
+  
+  Route53ResolverRulesProductAssociation:
+    DependsOn: 
+      - MasterPortfolio
+      - Route53ResolverRulesProduct
+    Type: AWS::ServiceCatalog::PortfolioProductAssociation
+    Properties:
+      AcceptLanguage: en
+      PortfolioId: !Ref MasterPortfolio
+      ProductId: !Ref Route53ResolverRulesProduct
+  
+  Route53PrivateHostedZoneProductAssociation:
+    DependsOn: 
+      - MasterPortfolio
+      - Route53PrivateHostedZoneProduct
+    Type: AWS::ServiceCatalog::PortfolioProductAssociation
+    Properties:
+      AcceptLanguage: en
+      PortfolioId: !Ref MasterPortfolio
+      ProductId: !Ref Route53PrivateHostedZoneProduct
+
+##### Portfolio Share Lambda Custom Resource
+ 
+  #Lambda exec role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Iam Role for Lambda Execution
+      Path: '/'
+      AssumeRolePolicyDocument: 
+        Version: '2012-10-17'
+        Statement:  
+        - Effect: Allow
+          Sid: ''
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AWSLambdaExecute
+      RoleName: ExecutionRoleForRoute53PortfolioShare
+      Policies:
+        - PolicyName: ExecutionPolicyForRoute53PortfolioShare
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - 'ec2:*'
+                  - 'cloudwatch:*'
+                  - 'servicecatalog:*'
+                  - 'organizations:*'
+                Resource: '*'
+
+  # Lambda Function PortfolioShare
+  PortfolioShareLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Lambda Function to share the Service Catalogue Portfolio
+      FunctionName: Route53PortfolioShareLambda
+      Handler: "index.lambda_handler"
+      MemorySize: 128
+      Timeout: 120
+      Role:
+        Fn::GetAtt:
+          - LambdaExecutionRole
+          - Arn
+      Runtime: python3.8
+      Environment:
+        Variables:
+          PortfolioId: !Ref MasterPortfolio
+          OrganizationalUnit:
+            Ref: OrganizationID
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import logging, sys, traceback
+          import urllib3
+          import os
+          from os import path
+
+          http = urllib3.PoolManager()
+          from botocore.exceptions import ClientError
+          from urllib.parse import unquote
+
+          # Setting base-config for Logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          SUCCESS = "SUCCESS"
+          FAILED = "FAILED"
+          def sendResponse(event, context, responseStatus, responseData, reason=None, physical_resource_id=None):
+              responseBody = {'Status': responseStatus,
+                              'Reason': 'See the details in CloudWatch Log Stream: ' + context.log_stream_name,
+                              'PhysicalResourceId': physical_resource_id or context.log_stream_name,
+                              'StackId': event['StackId'],
+                              'RequestId': event['RequestId'],
+                              'LogicalResourceId': event['LogicalResourceId'],
+                              'Data': responseData}
+              print ('RESPONSE BODY:n' + json.dumps(responseBody))
+              responseUrl = event['ResponseURL']
+              json_responseBody = json.dumps(responseBody)
+              headers = {
+                  'content-type' : '',
+                  'content-length' : str(len(json_responseBody))
+              }
+              try:
+                  response = http.request('PUT', responseUrl, headers=headers, body=json_responseBody)
+                  #response = response.send(responseUrl, data=json_responseBody, headers=headers)
+                  print ("Status code: " +response.reason)
+              except Exception as e:
+                  print ("send(..) failed executing requests.put(..): " + str(e))
+
+          def lambda_handler(event,context):
+              client = boto3.client('servicecatalog')
+              portfolio_id  = (os.environ['PortfolioId'])
+              organizational_unit= (os.environ['OrganizationalUnit'])
+              try:
+
+                  if event['RequestType'] == 'Delete':
+                      logger.info("Received a Delete Request...")
+                      responseStatus = "SUCCESS"
+                      response = client.delete_portfolio_share(
+                          AcceptLanguage='en',
+                          PortfolioId=portfolio_id,
+                          OrganizationNode={
+                              'Type': 'ORGANIZATION',
+                              'Value': organizational_unit
+                          }
+                      )
+                      responseData = {}
+                  elif event['RequestType'] == 'Create':
+                      logger.info("Received a Create Request...")
+                      responseData = {}
+                      responseStatus = "SUCCESS"
+                      response = client.create_portfolio_share(
+                        AcceptLanguage='en',
+                        PortfolioId=portfolio_id,
+                        OrganizationNode={
+                            'Type': 'ORGANIZATION',
+                            'Value': organizational_unit
+                        },
+                        ShareTagOptions=True
+                        )
+                  elif event['RequestType'] == 'Update':
+                      logger.info("Received a Update Request...")
+                      responseData = {}
+                      responseStatus = "SUCCESS" 
+                      response = client.create_portfolio_share(
+                        AcceptLanguage='en',
+                        PortfolioId=portfolio_id,
+                        OrganizationNode={
+                            'Type': 'ORGANIZATION',
+                            'Value': organizational_unit
+                        },
+                        ShareTagOptions=True
+                        )                
+              except Exception as exp:
+                  responseStatus = "FAILED"
+                  responseData = {}
+                  exception_type, exception_value, exception_traceback = sys.exc_info()
+                  traceback_string = traceback.format_exception(exception_type, exception_value, exception_traceback)
+                  err_msg = json.dumps({
+                      "errorType": exception_type.__name__,
+                      "errorMessage": str(exception_value),
+                      "stackTrace": traceback_string
+                  })
+                  logger.error(err_msg)
+              sendResponse(event, context, responseStatus, responseData)  
+
+  Portfoliocustomresource:
+    Type: AWS::CloudFormation::CustomResource
+    DependsOn: 
+    - PortfolioShareLambda
+    - Route53ResolverRulesProductAssociation
+    - Route53PrivateHostedZoneProductAssociation
+    Properties:
+      ServiceToken: !GetAtt PortfolioShareLambda.Arn
+      DummyVersion: !Ref Version
+
+
+Outputs:
+  oChildDomainsResolverRuleID:
+    Description: Rule ID of the Shared Route53 rule for All Child Domains in Landing Zone
+    Value: !GetAtt "ChildDomainsResolverRule.ResolverRuleId"
+  oOnPremDomainResolverRuleID:
+    Description: Rule ID of the Shared Route53 rule for On-Premise DNS Domain
+    Value: !GetAtt "OnPremDomainResolverRule.ResolverRuleId"
+  SNSAssociationTopicArn:
+    Description: ARN of the SNSAssociationTopic
+    Value: !Ref SNSAssociationTopic
+  oOutBoundDNSResolverID:
+    Description: ID of the Route53 Outbound DNS resolver Endpoint
+    Value: !GetAtt Route53OutboundEndpoint.ResolverEndpointId
+  oInboundResolverIP1:
+    Description: First IP address of the Inbound Route53 Resolver endpoint
+    Value: !Ref Subnet1InboundIP
+  oInboundResolverIP2:
+    Description: First IP address of the Inbound Route53 Resolver endpoint
+    Value: !Ref Subnet2InboundIP
+  oInboundResolverIP3:
+    Description: First IP address of the Inbound Route53 Resolver endpoint
+    Value: !Ref Subnet3InboundIP
+  oMasterPortfolioId:
+    Description: The master portfolio ID that was created
+    Value: !Ref MasterPortfolio
+    Export:
+      Name: MASTER-DNS-PORTFOLIO-ID
+  oRoute53ResolverRulesProductId:
+    Description: Route53 Resolver Rules product ID
+    Value: !Ref Route53ResolverRulesProduct
+    Export:
+      Name: ROUTE53-RESOLVER-RULES-PRODUCT-ID
+  oRoute53ResolverRulesProductName:
+    Description: Route53 Resolver Rules Product Name
+    Value: !GetAtt Route53ResolverRulesProduct.ProductName
+    Export:
+      Name: ROUTE53-RESOLVER-RULES-PRODUCT-NAME
+  oRoute53PrivateHostedZoneProductId:
+    Description: Route53 Resolver Rules product ID
+    Value: !Ref Route53PrivateHostedZoneProduct
+    Export:
+      Name: ROUTE53-PRIVATE-HOSTED-ZONE-PRODUCT-ID
+  oRoute53PrivateHostedZoneProductName:
+    Description: Route53 Resolver Rules Product Name
+    Value: !GetAtt Route53PrivateHostedZoneProduct.ProductName
+    Export:
+      Name: ROUTE53-PRIVATE-HOSTED-ZONE-PRODUCT-NAME
+  oPortfolioShareLambda:
+    Description: Lambda Function to Share the Service Catalogue Portfolio
+    Value: !GetAtt PortfolioShareLambda.Arn
