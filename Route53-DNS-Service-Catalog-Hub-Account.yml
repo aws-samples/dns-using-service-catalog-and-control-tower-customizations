@@ -32,8 +32,9 @@ Metadata:
           default: Service Catalog Configuration
         Parameters:
           - PortfolioName
-          - Route53ResolverRulesProductKey
-          - Route53PrivateHostedZoneProductKey
+          - Route53OutboundDNSProductKey
+          - Route53InboundDNSProductKey
+          - Route53PrivateDNSProductKey
           - Version
 
 Parameters :
@@ -59,6 +60,9 @@ Parameters :
   HubVpcId:
     Type: AWS::EC2::VPC::Id
     Description: VPC Id in the Networking Shared Service(Hub) Account to host the Service endpoints
+  HubPrivateHostedZoneName:
+    Type: String
+    Description: Domain name for the Hub Private Hosted Zone
   Subnet1:
     Type: AWS::EC2::Subnet::Id
     Description: Subnet ID of the shared services(Hub) VPC's 1st Private Subnet
@@ -90,22 +94,35 @@ Parameters :
   PortfolioName:
     Type: String
     Default: Self-Service DNS Portfolio
-  Route53ResolverRulesProductKey:
+  Route53OutboundDNSProductKey:
     Type: String
-    Description: The full S3 location where the Route53 resolver rules product template is uploaded to.
-    Default: https://service-catalog-products-dns.s3.us-west-2.amazonaws.com/Rule-association.yaml
-  Route53PrivateHostedZoneProductKey:
+    Description: The full S3 location where the Route53 outbound DNS product template is uploaded to.
+    Default: https://service-catalog-products-dns.s3.us-west-2.amazonaws.com/OutboundDNSProduct.yml
+  Route53InboundDNSProductKey:
     Type: String
-    Description: The full S3 location where the Route53 private hosted zone product template is uploaded to.
-    Default: https://service-catalog-products-dns.s3.us-west-2.amazonaws.com/PrivateHostedZoneProduct.yaml
+    Description: The full S3 location where the Route53 inbound DNS product template is uploaded to.
+    Default: https://service-catalog-products-dns.s3.us-west-2.amazonaws.com/InboundDNSProduct.yml
+  Route53PrivateDNSProductKey:
+    Type: String
+    Description: The full S3 location where the Route53 private DNS product template is uploaded to.
+    Default: https://service-catalog-products-dns.s3.us-west-2.amazonaws.com/PrivateDNSProduct.yml
   Version:
     Type: String
     Description: Parameter to trigger the custom resource update. Please change this value every time you want to trigger the update logic of custom resource
     Default: 1
 
 Resources:
-## Creating Security Groups for Route53 Resolvers
+## Creating Hub Account Private Hosted Zone
+  HubPrivateHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties :
+      Name : !Ref HubPrivateHostedZoneName
+      VPCs:
+        -
+          VPCRegion: !Ref "AWS::Region"
+          VPCId: !Ref HubVpcId
 
+## Creating Security Groups for Route53 Resolvers
   SecurityGroupforRoute53Resolvers:
     Type: AWS::EC2::SecurityGroup
     Properties: 
@@ -143,7 +160,7 @@ Resources:
     Type: "AWS::Route53Resolver::ResolverEndpoint"
     Properties:
       Name: Route53InboundEndpoint
-      Direction: Inbound
+      Direction: INBOUND
       IpAddresses:
         - SubnetId: !Ref Subnet1
           Ip: !Ref Subnet1InboundIP
@@ -158,7 +175,7 @@ Resources:
     Type: "AWS::Route53Resolver::ResolverEndpoint"
     Properties:
       Name: Route53OutboundEndpoint
-      Direction: Outbound
+      Direction: OUTBOUND
       IpAddresses:
         - SubnetId: !Ref Subnet1
           Ip: !Ref Subnet1OutboundIP
@@ -213,14 +230,14 @@ Resources:
       Principals:
         - !Sub arn:aws:organizations::${ManagementAccountId}:organization/${OrganizationID}
 
-## Automation to receive attachment requests from Child PHZs to the hub HubVpcId
+## Automation to receive attachment requests from Child PHZs to the Vpcs
 
-  SNSAssociationTopic:
+  PrivateDNSProductSNSAssociationTopic:
     Type: AWS::SNS::Topic
     Properties:
-      DisplayName: PrivateHostedZoneAssociationTopic
-      TopicName: PrivateHostedZoneAssociationTopic
-  SNSAssociationTopicPolicy:
+      DisplayName: PrivateDNSAssociationTopic
+      TopicName: PrivateDNSAssociationTopic
+  PrivateDNSProductSNSAssociationTopicPolicy:
     Metadata:
       cfn_nag:
         rules_to_suppress:
@@ -229,33 +246,263 @@ Resources:
     Type: AWS::SNS::TopicPolicy
     Properties:
       Topics:
-        - !Ref SNSAssociationTopic
+        - !Ref PrivateDNSProductSNSAssociationTopic
       PolicyDocument:
         Statement:
           - Sid: AWSSNSPolicy
             Action:
               - sns:Publish
             Effect: Allow
-            Resource: !Ref SNSAssociationTopic
+            Resource: !Ref PrivateDNSProductSNSAssociationTopic
             Principal:
               AWS: '*'
             Condition:
               StringEquals:
                 aws:PrincipalOrgID: !Ref OrganizationID
-  SNSAssociationSubscription:
+  PrivateDNSProductSNSAssociationSubscription:
     Type: "AWS::SNS::Subscription"
     Properties:
-      Endpoint: !GetAtt AssociationLambda.Arn
+      Endpoint: !GetAtt PrivateDNSProductAssociationLambda.Arn
       Protocol: lambda
-      TopicArn: !Ref SNSAssociationTopic
-  SNSAssociationLambdaPermission:
+      TopicArn: !Ref PrivateDNSProductSNSAssociationTopic
+  PrivateDNSProductSNSAssociationLambdaPermission:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
       Principal: sns.amazonaws.com
-      SourceArn: !Ref SNSAssociationTopic
-      FunctionName: !GetAtt AssociationLambda.Arn
-  AssociationLambdaRole:
+      SourceArn: !Ref PrivateDNSProductSNSAssociationTopic
+      FunctionName: !GetAtt PrivateDNSProductAssociationLambda.Arn
+  PrivateDNSProductAssociationLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "Resource * acceptable for this policy."
+    Properties:
+      RoleName: Route53-DNS-Service-Catalog-Hub-Lambda-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'lambda.amazonaws.com'
+          Action:
+          - 'sts:AssumeRole'
+      Path: '/'
+      ManagedPolicyArns:
+      - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+      - PolicyName: Route53PrivateZoneAssociation
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'route53:AssociateVPCWithHostedZone'
+            - 'route53:CreateVPCAssociationAuthorization'
+            Resource: !Sub 'arn:${AWS::Partition}:route53:::hostedzone/*'
+      - PolicyName: DescribeVPCAndAssumeRole
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'ec2:DescribeVpcs'
+            - 'sts:AssumeRole'
+            Resource: '*'
+      - PolicyName: DynamoDBAccessRole
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'dynamodb:BatchWriteItem'
+            - 'dynamodb:PutItem'
+            Resource: 
+            - !GetAtt "PrivateDNSAccountsDynamoDBTable.Arn"
+            - !GetAtt "PrivateDNSVPCMappingsDynamoDBTable.Arn" 
+  PrivateDNSProductAssociationLambda: # needs no monitoring because it is used as a custom resource
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        ZipFile:
+          !Sub |
+          # Import statements
+          import boto3
+          import json
+          import ast
+          from botocore.exceptions import ClientError
+          # Start Lambda function
+          sts_client = boto3.client('sts')
+          ddb = boto3.client('dynamodb')
+          def lambda_handler(event, context):
+            print(f"Hosted Zone {event['Records'][0]['Sns']['Subject']}")
+            associationData = json.loads(event['Records'][0]['Sns']['Message'])
+            aws_account_id = context.invoked_function_arn.split(":")[4]
+            aws_namespace = context.invoked_function_arn.split(":")[1]
+            print('data received:', associationData)
+            vpcs = ast.literal_eval(associationData['VPCIds'])
+            accounts = ast.literal_eval(associationData['AccountIds'])
+            ddbAccountTableInput = {
+              "AccountID":{"N":associationData['SourceAccountId']},
+              "HostedZoneID":{"S":associationData['hostedZoneId']},
+              "DomainName":{"S":associationData['hostedZoneDomainName']}
+            }
+            ddbVPCMappingInput = {
+              "PrivateDNSProductVPCMappings": []
+            }
+            try:
+              for idx, account_id in enumerate(accounts):
+                source_role_arn = "arn:"+aws_namespace+":iam::"+associationData['SourceAccountId']+":role/HubLambdaAssumeRole"
+                source_assumed_role_object=sts_client.assume_role(
+                    RoleArn=source_role_arn,
+                    RoleSessionName="AssumeRoleSession"+associationData['SourceAccountId']
+                )
+                source_credentials=source_assumed_role_object['Credentials']
+                route53_source = boto3.client('route53',
+                    aws_access_key_id=source_credentials['AccessKeyId'],
+                    aws_secret_access_key=source_credentials['SecretAccessKey'],
+                    aws_session_token=source_credentials['SessionToken'],
+                )
+                route53_source.create_vpc_association_authorization(
+                  HostedZoneId=associationData['hostedZoneId'],
+                  VPC={
+                    'VPCRegion': associationData['VPCRegion'],
+                    'VPCId': vpcs[idx]
+                  }
+                )
+                # Create association in Target account
+                if account_id != aws_account_id:
+                  target_role_arn = "arn:"+aws_namespace+":iam::"+account_id+":role/HubLambdaAssumeRole"
+                  target_assumed_role_object=sts_client.assume_role(
+                      RoleArn=target_role_arn,
+                      RoleSessionName="AssumeRoleSession"+account_id
+                  )
+                  target_credentials=target_assumed_role_object['Credentials']
+                  route53_target = boto3.client('route53',
+                      aws_access_key_id=target_credentials['AccessKeyId'],
+                      aws_secret_access_key=target_credentials['SecretAccessKey'],
+                      aws_session_token=target_credentials['SessionToken'],
+                  )
+                else:  
+                  route53_target = boto3.client('route53')
+                response = route53_target.associate_vpc_with_hosted_zone(
+                  HostedZoneId=associationData['hostedZoneId'],
+                  VPC={
+                    'VPCRegion': associationData['VPCRegion'],
+                    'VPCId': vpcs[idx]
+                  }
+                )
+                print(response)
+                ddbVPCItem={
+                  "PutRequest":{
+                    "Item": {
+                      "VPCID":{"S":vpcs[idx]},
+                      "VPCAccountID":{"N":account_id},
+                      "AccountID":{"N":associationData['SourceAccountId']},
+                      "HostedZoneID":{"S":associationData['hostedZoneId']}
+                    }
+                  }
+                }
+                ddbVPCMappingInput['PrivateDNSProductVPCMappings'].append(ddbVPCItem)
+                print("Respond: SUCCESS")
+              ddb.batch_write_item(
+                RequestItems=ddbVPCMappingInput
+              )
+              ddb.put_item(
+                TableName="PrivateDNSProductAccounts",
+                Item=ddbAccountTableInput
+              )
+              return
+            except ClientError as ex:
+              print('Creating hosted zone association has failed.  See the following error.')
+              print(ex.response['Error']['Message'])
+              print("Respond: FAILED")
+              return
+      Handler: "index.lambda_handler"
+      MemorySize: 512
+      Role: !GetAtt "PrivateDNSProductAssociationLambdaRole.Arn"
+      Runtime: "python3.6"
+      Timeout: 900
+
+  PrivateDNSAccountsDynamoDBTable: 
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      AttributeDefinitions: 
+        - 
+          AttributeName: "AccountID"
+          AttributeType: "N"
+      KeySchema: 
+        - 
+          AttributeName: "AccountID"
+          KeyType: "HASH"
+      ProvisionedThroughput: 
+        ReadCapacityUnits: "5"
+        WriteCapacityUnits: "5"
+      TableName: "PrivateDNSProductAccounts"
+
+  PrivateDNSVPCMappingsDynamoDBTable: 
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      AttributeDefinitions: 
+        - 
+          AttributeName: "HostedZoneID"
+          AttributeType: "S"
+        - 
+          AttributeName: "VPCID"
+          AttributeType: "S"
+      KeySchema: 
+        - 
+          AttributeName: "HostedZoneID"
+          KeyType: "HASH"
+        - 
+          AttributeName: "VPCID"
+          KeyType: "RANGE"
+      ProvisionedThroughput: 
+        ReadCapacityUnits: "5"
+        WriteCapacityUnits: "5"
+      TableName: "PrivateDNSProductVPCMappings"
+
+## Automation to receive authorization requests for HUB PHZ to the spoke VPCs
+  InboundDNSProductSNSAuthorizationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: InboundDNSAuthorizationTopic
+      TopicName: InboundDNSAuthorizationTopic
+  InboundDNSProductSNSAuthorizationTopicPolicy:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F18
+            reason: "We can allow * for the Principal as we are limiting access to the Org."
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref InboundDNSProductSNSAuthorizationTopic
+      PolicyDocument:
+        Statement:
+          - Sid: AWSSNSPolicy
+            Action:
+              - sns:Publish
+            Effect: Allow
+            Resource: !Ref InboundDNSProductSNSAuthorizationTopic
+            Principal:
+              AWS: '*'
+            Condition:
+              StringEquals:
+                aws:PrincipalOrgID: !Ref OrganizationID
+  InboundDNSProductSNSAuthorizationSubscription:
+    Type: "AWS::SNS::Subscription"
+    Properties:
+      Endpoint: !GetAtt InboundDNSProductAuthorizationLambda.Arn
+      Protocol: lambda
+      TopicArn: !Ref InboundDNSProductSNSAuthorizationTopic
+  InboundDNSProductSNSAuthorizationLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref InboundDNSProductSNSAuthorizationTopic
+      FunctionName: !GetAtt InboundDNSProductAuthorizationLambda.Arn
+  InboundDNSProductAuthorizationLambdaRole:
     Type: 'AWS::IAM::Role'
     Metadata:
       cfn_nag:
@@ -275,21 +522,21 @@ Resources:
       ManagedPolicyArns:
       - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
       Policies:
-      - PolicyName: Route53PrivateZoneAssociation
+      - PolicyName: Route53PrivateZoneAuthorization
         PolicyDocument:
           Statement:
           - Effect: Allow
             Action:
-            - 'route53:AssociateVPCWithHostedZone'
+            - route53:CreateVPCAssociationAuthorization
             Resource: !Sub 'arn:${AWS::Partition}:route53:::hostedzone/*'
-      - PolicyName: DescribeVPCs
+      - PolicyName: DescribeVPCAndAssumeRole
         PolicyDocument:
           Statement:
           - Effect: Allow
             Action:
             - 'ec2:DescribeVpcs'
             Resource: '*'
-  AssociationLambda: # needs no monitoring because it is used as a custom resource
+  InboundDNSProductAuthorizationLambda: # needs no monitoring because it is used as a custom resource
     Type: 'AWS::Lambda::Function'
     Properties:
       Code:
@@ -301,29 +548,29 @@ Resources:
           from botocore.exceptions import ClientError
           # Start Lambda function
           def lambda_handler(event, context):
+            route53 = boto3.client('route53')
             print(f"Hosted Zone {event['Records'][0]['Sns']['Subject']}")
             associationData = json.loads(event['Records'][0]['Sns']['Message'])
             print('data received:', associationData)
-            try:
-              route53 = boto3.client('route53')
-              response = route53.associate_vpc_with_hosted_zone(
-                HostedZoneId=associationData['hostedZoneId'],
-                VPC={
-                  'VPCRegion': associationData['VPCRegion'],
-                  'VPCId': associationData['VPCId']
-                }
-              )
+            try: 
+              response = route53.create_vpc_association_authorization(
+                  HostedZoneId = associationData['hostedZoneId']},
+                  VPC={
+                    "VPCRegion": associationData['VPCRegion'],
+                    "VPCId": associationData['VPCId']
+                  }
+                )
               print(response)
               print("Respond: SUCCESS")
               return
             except ClientError as ex:
-              print('Creating hosted zone association has failed.  See the following error.')
+              print('Creating hosted zone authorization has failed.  See the following error.')
               print(ex.response['Error']['Message'])
               print("Respond: FAILED")
               return
       Handler: "index.lambda_handler"
       MemorySize: 128
-      Role: !GetAtt "AssociationLambdaRole.Arn"
+      Role: !GetAtt "InboundDNSProductAuthorizationLambdaRole.Arn"
       Runtime: "python3.6"
       Timeout: 60
 
@@ -339,55 +586,70 @@ Resources:
 
 ##### Product Resources #####
 
-  Route53ResolverRulesProduct:
+  Route53OutboundDNSProduct:
     Type: AWS::ServiceCatalog::CloudFormationProduct
     Properties:
       AcceptLanguage: en
       Description: This product builds standardized DNS Resolver rule associations.
       Distributor: AWS
-      Name: Route53 Resolver Rule Association
+      Name: Route53 Outbound DNS Product
       Owner: AWS
       ProvisioningArtifactParameters:
-        - Description: This is version 1.0 of the AWS Route53 Resolver Rules product.
-          Name: Version - 1.0
+        - Description: This is version 1.0 of the AWS Route53 Outbound DNS product.
+          Name: Version - 1.2
           Info:
-            LoadTemplateFromURL: !Ref Route53ResolverRulesProductKey
+            LoadTemplateFromURL: !Ref Route53OutboundDNSProductKey
 
-  Route53PrivateHostedZoneProduct:
+  Route53InboundDNSProduct:
     Type: AWS::ServiceCatalog::CloudFormationProduct
     Properties:
       AcceptLanguage: en
-      Description: This product builds a standardized DNS private hosted zone associations.
+      Description: This product builds standardized DNS private hosted zone authorization with spoke vpcs.
       Distributor: AWS
-      Name: Route53 Private Hosted Zone
+      Name: Route53 Inbound DNS Product
       Owner: AWS
       ProvisioningArtifactParameters:
-        - Description: This is version 1.0 of the AWS Route53 Private Hosted Zone product.
-          Name: Version - 1.0
+        - Description: This is version 1.0 of the AWS Route53 Inbound DNS product.
+          Name: Version - 1.2
           Info:
-            LoadTemplateFromURL: !Ref Route53PrivateHostedZoneProductKey
+            LoadTemplateFromURL: !Ref Route53InboundDNSProductKey
+
+  Route53PrivateDNSProduct:
+    Type: AWS::ServiceCatalog::CloudFormationProduct
+    Properties:
+      AcceptLanguage: en
+      Description: This product builds a standardized DNS spoke private hosted zone associations with hub vpc.
+      Distributor: AWS
+      Name: Route53 Private DNS Product
+      Owner: AWS
+      ProvisioningArtifactParameters:
+        - Description: This is version 1.0 of the AWS Route53 Private DNS product.
+          Name: Version - 1.2
+          Info:
+            LoadTemplateFromURL: !Ref Route53PrivateDNSProductKey
 
 ##### Portfolio / Product Associations ##### 
   
-  Route53ResolverRulesProductAssociation:
-    DependsOn: 
-      - MasterPortfolio
-      - Route53ResolverRulesProduct
+  Route53OutboundDNSProductAssociation:
     Type: AWS::ServiceCatalog::PortfolioProductAssociation
     Properties:
       AcceptLanguage: en
       PortfolioId: !Ref MasterPortfolio
-      ProductId: !Ref Route53ResolverRulesProduct
+      ProductId: !Ref Route53OutboundDNSProduct
   
-  Route53PrivateHostedZoneProductAssociation:
-    DependsOn: 
-      - MasterPortfolio
-      - Route53PrivateHostedZoneProduct
+  Route53InboundDNSProductAssociation:
     Type: AWS::ServiceCatalog::PortfolioProductAssociation
     Properties:
       AcceptLanguage: en
       PortfolioId: !Ref MasterPortfolio
-      ProductId: !Ref Route53PrivateHostedZoneProduct
+      ProductId: !Ref Route53InboundDNSProduct
+  
+  Route53PrivateDNSProductAssociation:
+    Type: AWS::ServiceCatalog::PortfolioProductAssociation
+    Properties:
+      AcceptLanguage: en
+      PortfolioId: !Ref MasterPortfolio
+      ProductId: !Ref Route53PrivateDNSProduct
 
 ##### Portfolio Share Lambda Custom Resource
  
@@ -540,24 +802,29 @@ Resources:
   Portfoliocustomresource:
     Type: AWS::CloudFormation::CustomResource
     DependsOn: 
-    - PortfolioShareLambda
-    - Route53ResolverRulesProductAssociation
-    - Route53PrivateHostedZoneProductAssociation
+    - Route53OutboundDNSProductAssociation
+    - Route53InboundDNSProductAssociation
+    - Route53PrivateDNSProductAssociation
     Properties:
       ServiceToken: !GetAtt PortfolioShareLambda.Arn
       DummyVersion: !Ref Version
 
-
 Outputs:
+  oHubPrivateHostedZoneID:
+    Description: ID of the private hosted zone in the network hub account
+    Value: !GetAtt "HubPrivateHostedZone.Id"
   oChildDomainsResolverRuleID:
     Description: Rule ID of the Shared Route53 rule for All Child Domains in Landing Zone
     Value: !GetAtt "ChildDomainsResolverRule.ResolverRuleId"
   oOnPremDomainResolverRuleID:
     Description: Rule ID of the Shared Route53 rule for On-Premise DNS Domain
     Value: !GetAtt "OnPremDomainResolverRule.ResolverRuleId"
-  SNSAssociationTopicArn:
-    Description: ARN of the SNSAssociationTopic
-    Value: !Ref SNSAssociationTopic
+  oInboundDNSProductSNSAuthorizationTopicArn:
+    Description: ARN of the Inbound DNS SNSAuthorizationTopic
+    Value: !Ref InboundDNSProductSNSAuthorizationTopic
+  oPrivateDNSProductSNSAssociationTopicArn:
+    Description: ARN of the Private DNS SNSAssociationTopic
+    Value: !Ref PrivateDNSProductSNSAssociationTopic
   oOutBoundDNSResolverID:
     Description: ID of the Route53 Outbound DNS resolver Endpoint
     Value: !GetAtt Route53OutboundEndpoint.ResolverEndpointId
@@ -575,26 +842,36 @@ Outputs:
     Value: !Ref MasterPortfolio
     Export:
       Name: MASTER-DNS-PORTFOLIO-ID
-  oRoute53ResolverRulesProductId:
-    Description: Route53 Resolver Rules product ID
-    Value: !Ref Route53ResolverRulesProduct
+  oRoute53OutboundDNSProductId:
+    Description: Route53 Outbound DNS product ID
+    Value: !Ref Route53OutboundDNSProduct
     Export:
-      Name: ROUTE53-RESOLVER-RULES-PRODUCT-ID
-  oRoute53ResolverRulesProductName:
-    Description: Route53 Resolver Rules Product Name
-    Value: !GetAtt Route53ResolverRulesProduct.ProductName
+      Name: ROUTE53-OUTBOUND-DNS-PRODUCT-ID
+  oRoute53OutboundDNSProductName:
+    Description: Route53 Outbound DNS Product Name
+    Value: !GetAtt Route53OutboundDNSProduct.ProductName
     Export:
-      Name: ROUTE53-RESOLVER-RULES-PRODUCT-NAME
-  oRoute53PrivateHostedZoneProductId:
-    Description: Route53 Resolver Rules product ID
-    Value: !Ref Route53PrivateHostedZoneProduct
+      Name: ROUTE53-OUTBOUND-DNS-PRODUCT-NAME
+  oRoute53InboundDNSProductId:
+    Description: Route53 Inbound DNS product ID
+    Value: !Ref Route53InboundDNSProduct
     Export:
-      Name: ROUTE53-PRIVATE-HOSTED-ZONE-PRODUCT-ID
-  oRoute53PrivateHostedZoneProductName:
-    Description: Route53 Resolver Rules Product Name
-    Value: !GetAtt Route53PrivateHostedZoneProduct.ProductName
+      Name: ROUTE53-INBOUND-DNS-PRODUCT-ID
+  oRoute53InboundDNSProductName:
+    Description: Route53 Inbound DNS Product Name
+    Value: !GetAtt Route53InboundDNSProduct.ProductName
     Export:
-      Name: ROUTE53-PRIVATE-HOSTED-ZONE-PRODUCT-NAME
+      Name: ROUTE53-INBOUND-DNS-PRODUCT-NAME
+  oRoute53PrivateDNSProductId:
+    Description: Route53 Private DNS product ID
+    Value: !Ref Route53PrivateDNSProduct
+    Export:
+      Name: ROUTE53-PRIVATE-DNS-PRODUCT-ID
+  oRoute53PrivateDNSProductName:
+    Description: Route53 Private DNS Product Name
+    Value: !GetAtt Route53PrivateDNSProduct.ProductName
+    Export:
+      Name: ROUTE53-PRIVATE-DNS-PRODUCT-NAME
   oPortfolioShareLambda:
     Description: Lambda Function to Share the Service Catalogue Portfolio
     Value: !GetAtt PortfolioShareLambda.Arn
